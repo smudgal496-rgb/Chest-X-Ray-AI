@@ -1218,31 +1218,19 @@ analyzeBtn.addEventListener('click', async () => {
       reader.readAsDataURL(uploadedFile);
     });
 
-    // Try Gradio 4.x endpoint first (/run/predict), fall back to Gradio 3.x (/api/predict)
-    let result = null;
-    let lastErr = null;
+    // Call custom /predict endpoint
+    const response = await fetch(`${GRADIO_URL}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: imageData })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if (result.error) throw new Error(result.error);
 
-    for (const endpoint of ['/run/predict', '/api/predict']) {
-      try {
-        const response = await fetch(`${GRADIO_URL}${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: [imageData] })
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        result = await response.json();
-        console.log(`✅ Connected via ${endpoint}`);
-        break;
-      } catch (e) {
-        lastErr = e;
-        console.warn(`❌ ${endpoint} failed:`, e.message);
-      }
-    }
+    probs  = result.probs;
+    camB64 = result.cam;
 
-    if (!result) throw lastErr;
-
-    probs  = result.data[0];
-    camB64 = result.data[1];
 
   } catch (err) {
     // Graceful fallback if API is unreachable
