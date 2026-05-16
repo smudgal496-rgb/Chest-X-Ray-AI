@@ -15,7 +15,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 window._sb = supabase;
 
 const CONDITIONS = ["Pneumonia","Infiltration","Effusion","Cardiomegaly","Atelectasis"];
-const GRADIO_URL = "https://d2062107c2161748f4.gradio.live";
+const GRADIO_URL = "https://shivammudgal-chestxrayai.hf.space";
 
 // ── Auth state ────────────────────────────────────────────────────────────────
 let currentUser = null;
@@ -186,21 +186,35 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Use Gradio /api/predict directly (simplest approach)
+    // Call HF Space Gradio API
     const sessionHash = Math.random().toString(36).slice(2);
-    const response = await fetch(`${GRADIO_URL}/api/predict`, {
+
+    // Step 1: Submit job
+    const submitRes = await fetch(`${GRADIO_URL}/run/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: [imageData], session_hash: sessionHash, fn_index: 0 })
+      body: JSON.stringify({ data: [imageData] })
     });
-    if (!response.ok) {
-      const txt = await response.text();
-      throw new Error(`API ${response.status}: ${txt.substring(0,100)}`);
+
+    if (submitRes.ok) {
+      // Direct response (no queue)
+      const result = await submitRes.json();
+      if (result.error) throw new Error(result.error);
+      lastProbs  = result.data[0];
+      lastCamB64 = result.data[1];
+    } else {
+      // Try /api/predict fallback
+      const fallbackRes = await fetch(`${GRADIO_URL}/api/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: [imageData], fn_index: 0, session_hash: sessionHash })
+      });
+      if (!fallbackRes.ok) throw new Error(`API error: ${fallbackRes.status}`);
+      const result2 = await fallbackRes.json();
+      if (result2.error) throw new Error(result2.error);
+      lastProbs  = result2.data[0];
+      lastCamB64 = result2.data[1];
     }
-    const result = await response.json();
-    if (result.error) throw new Error(result.error);
-    lastProbs  = result.data[0];
-    lastCamB64 = result.data[1];
 
   } catch (err) {
     document.getElementById('loading').classList.remove('active');
