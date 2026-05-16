@@ -186,35 +186,67 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Call HF Space Gradio API
+    // Call HF Space Gradio API — try all known endpoints
     const sessionHash = Math.random().toString(36).slice(2);
+    let lastErr = null;
+    let gotResult = false;
 
-    // Step 1: Submit job
-    const submitRes = await fetch(`${GRADIO_URL}/run/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: [imageData] })
-    });
-
-    if (submitRes.ok) {
-      // Direct response (no queue)
-      const result = await submitRes.json();
-      if (result.error) throw new Error(result.error);
-      lastProbs  = result.data[0];
-      lastCamB64 = result.data[1];
-    } else {
-      // Try /api/predict fallback
-      const fallbackRes = await fetch(`${GRADIO_URL}/api/predict`, {
+    // Try 1: /run/predict (standard Gradio on HF)
+    try {
+      const r1 = await fetch(`${GRADIO_URL}/run/predict`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: [imageData], fn_index: 0, session_hash: sessionHash })
+        body: JSON.stringify({ data: [imageData] })
       });
-      if (!fallbackRes.ok) throw new Error(`API error: ${fallbackRes.status}`);
-      const result2 = await fallbackRes.json();
-      if (result2.error) throw new Error(result2.error);
-      lastProbs  = result2.data[0];
-      lastCamB64 = result2.data[1];
+      if (r1.ok) {
+        const j1 = await r1.json();
+        if (!j1.error) {
+          lastProbs  = j1.data[0];
+          lastCamB64 = j1.data[1];
+          gotResult  = true;
+        }
+      }
+    } catch(e) { lastErr = e; }
+
+    // Try 2: /api/predict with fn_index
+    if (!gotResult) {
+      try {
+        const r2 = await fetch(`${GRADIO_URL}/api/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: [imageData], fn_index: 0, session_hash: sessionHash })
+        });
+        if (r2.ok) {
+          const j2 = await r2.json();
+          if (!j2.error) {
+            lastProbs  = j2.data[0];
+            lastCamB64 = j2.data[1];
+            gotResult  = true;
+          }
+        }
+      } catch(e) { lastErr = e; }
     }
+
+    // Try 3: HF Inference API format
+    if (!gotResult) {
+      try {
+        const r3 = await fetch(`${GRADIO_URL}/--replicas/*/run/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: [imageData] })
+        });
+        if (r3.ok) {
+          const j3 = await r3.json();
+          if (!j3.error) {
+            lastProbs  = j3.data[0];
+            lastCamB64 = j3.data[1];
+            gotResult  = true;
+          }
+        }
+      } catch(e) { lastErr = e; }
+    }
+
+    if (!gotResult) throw new Error('All API endpoints failed. Check HF Space is Running and CORS is enabled in app.py');
 
   } catch (err) {
     document.getElementById('loading').classList.remove('active');
