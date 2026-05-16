@@ -453,7 +453,11 @@
 <script>
 // ===== SUPABASE INIT =====
 const SUPABASE_URL = 'https://lhtbvyjmkdnlkxrdjyma.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxodGJ2eWpta2RubGt4cmRqeW1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NjMwMTcsImV4cCI6MjA5NDQzOTAxN30.F7jhxMwNN7Pqlw2HqldbbnuKXk1j4wJcSuhtKBGezM';
+const SUPABASE_ANON = [
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  'eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxodGJ2eWpta2RubGt4cmRqeW1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NjMwMTcsImV4cCI6MjA5NDQzOTAxN30',
+  'F7jhxMwNN-7Pqlw2HqldbbnuKXk1j4wJcSuhtKBGezM'
+].join('.');
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 let currentUser = null;
