@@ -204,41 +204,30 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Gradio NEW API (v4+) — uses /gradio_api/ prefix
+    // Gradio API — send base64 directly via /gradio_api/run/predict (no upload step)
+    // app.py uses gr.Image(type="numpy") so Gradio handles base64 decode server-side
     const sessionHash = Math.random().toString(36).slice(2,12);
     const GAPI = GRADIO_URL + '/gradio_api';
 
-    // Step 1: Upload image file
-    const blob = await fetch(imageData).then(r => r.blob());
-    const fd = new FormData();
-    fd.append('files', blob, uploadedFile.name);
-    const upRes = await fetch(`${GAPI}/upload`, { method: 'POST', body: fd });
-    if (!upRes.ok) {
-      // Fallback: try legacy queue with base64
-      const joinRes2 = await fetch(`${GRADIO_URL}/queue/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fn_index:0, session_hash:sessionHash, data:[{name:uploadedFile.name, data:imageData, is_file:false}] })
-      });
-      if (!joinRes2.ok) throw new Error(`Cannot reach HF Space API (${upRes.status}). Check Space is Running and has CORS middleware.`);
-      const output2 = await waitSSE(GRADIO_URL, sessionHash);
-      lastProbs  = output2.data[0];
-      lastCamB64 = output2.data[1];
-    } else {
-      const upJson = await upRes.json();
-      const filePath = upJson[0]?.path || upJson[0];
+    const predRes = await fetch(`${GAPI}/run/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fn_index: 0,
+        session_hash: sessionHash,
+        data: [imageData]   // pass full dataURL — Gradio auto-decodes for type="numpy"
+      })
+    });
 
-      // Step 2: Submit prediction
-      const predRes = await fetch(`${GAPI}/run/predict`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fn_index:0, session_hash:sessionHash, data:[{path:filePath, orig_name:uploadedFile.name}] })
-      });
-      if (!predRes.ok) throw new Error(`Predict call failed: ${predRes.status}`);
-      const predJson = await predRes.json();
-      if (predJson.error) throw new Error(predJson.error);
-      lastProbs  = predJson.data[0];
-      lastCamB64 = predJson.data[1];
+    if (!predRes.ok) {
+      const errText = await predRes.text().catch(()=>'');
+      throw new Error(`API error ${predRes.status}: ${errText.slice(0,200)}`);
+    }
+    const predJson = await predRes.json();
+    if (predJson.error) throw new Error('Model error: ' + predJson.error);
+
+    lastProbs  = predJson.data[0];
+    lastCamB64 = predJson.data[1];
     }
 
   } catch (err) {
