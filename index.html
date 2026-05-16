@@ -174,23 +174,6 @@ document.getElementById('threshold').addEventListener('input', function() {
   if (lastProbs.length) renderConditions(lastProbs, v);
 });
 
-
-// SSE helper for legacy Gradio queue
-function waitSSE(baseUrl, sessionHash) {
-  return new Promise((resolve, reject) => {
-    const es = new EventSource(`${baseUrl}/queue/data?session_hash=${sessionHash}`);
-    const t = setTimeout(() => { es.close(); reject(new Error('Timeout waiting for model')); }, 120000);
-    es.addEventListener('message', e => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.msg === 'process_completed') { clearTimeout(t); es.close(); resolve(msg.output); }
-        if (msg.msg === 'queue_full') { clearTimeout(t); es.close(); reject(new Error('Queue full')); }
-      } catch(_) {}
-    });
-    es.addEventListener('error', () => { clearTimeout(t); es.close(); reject(new Error('SSE dropped')); });
-  });
-}
-
 analyzeBtn.addEventListener('click', async () => {
   if (!uploadedFile) return;
   document.getElementById('loading').classList.add('active');
@@ -204,28 +187,31 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Gradio API — send base64 directly via /gradio_api/run/predict (no upload step)
-    // app.py uses gr.Image(type="numpy") so Gradio handles base64 decode server-side
+    // Gradio API v4 — /gradio_api/run/predict with base64 dataURL
     const sessionHash = Math.random().toString(36).slice(2,12);
     const GAPI = GRADIO_URL + '/gradio_api';
 
+    // Upload the file first to get a server path
+    const imgBlob = await fetch(imageData).then(r => r.blob());
+    const fd = new FormData();
+    fd.append('files', imgBlob, uploadedFile.name);
+    const upRes = await fetch(`${GAPI}/upload`, { method:'POST', body:fd });
+    if (!upRes.ok) throw new Error(`Upload failed: ${upRes.status} — check HF Space CORS`);
+    const upJson = await upRes.json();
+    const filePath = upJson[0]?.path ?? upJson[0];
+
+    // Run prediction with the uploaded path
     const predRes = await fetch(`${GAPI}/run/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fn_index: 0,
-        session_hash: sessionHash,
-        data: [imageData]   // pass full dataURL — Gradio auto-decodes for type="numpy"
-      })
+      body: JSON.stringify({ fn_index:0, session_hash:sessionHash, data:[{path:filePath, orig_name:uploadedFile.name, mime_type:imgBlob.type}] })
     });
-
     if (!predRes.ok) {
-      const errText = await predRes.text().catch(()=>'');
-      throw new Error(`API error ${predRes.status}: ${errText.slice(0,200)}`);
+      const t = await predRes.text().catch(()=>'');
+      throw new Error(`Predict failed: ${predRes.status} — ${t.slice(0,150)}`);
     }
     const predJson = await predRes.json();
     if (predJson.error) throw new Error('Model error: ' + predJson.error);
-
     lastProbs  = predJson.data[0];
     lastCamB64 = predJson.data[1];
     }
