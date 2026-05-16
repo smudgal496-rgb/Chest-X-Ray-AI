@@ -214,7 +214,6 @@ analyzeBtn.addEventListener('click', async () => {
     if (predJson.error) throw new Error('Model error: ' + predJson.error);
     lastProbs  = predJson.data[0];
     lastCamB64 = predJson.data[1];
-    }
 
   } catch (err) {
     document.getElementById('loading').classList.remove('active');
