@@ -706,23 +706,49 @@ analyzeBtn.addEventListener('click', async () => {
       es.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
+
+          // Log all SSE frames during development to aid debugging
+          console.debug('[ChestAI SSE]', msg.msg, msg);
+
           if (msg.msg === 'process_completed') {
             clearTimeout(timeout);
             es.close();
+
+            // ── Handle explicit backend error ──────────────────────────
             if (msg.output && msg.output.error) {
               reject(new Error('Model error: ' + msg.output.error));
-            } else if (msg.output && msg.output.data) {
-              resolve(msg.output.data);
-            } else {
-              reject(new Error('Unexpected response format'));
+              return;
             }
+
+            // ── Try all known Gradio 4.x payload shapes ────────────────
+            // Shape A (most common): { output: { data: [...] } }
+            // Shape B (some versions): output IS the array directly
+            // Shape C (hoisted):       { success: true, data: [...] }
+            let data = null;
+
+            if (Array.isArray(msg.output?.data)) {
+              data = msg.output.data;
+            } else if (Array.isArray(msg.output)) {
+              data = msg.output;
+            } else if (msg.success && Array.isArray(msg.data)) {
+              data = msg.data;
+            }
+
+            if (data && data.length >= 2) {
+              resolve(data);
+            } else {
+              // Log the full raw payload so the shape is visible in DevTools
+              console.error('[ChestAI] Unexpected SSE response shape:', JSON.stringify(msg));
+              reject(new Error('Unexpected response format — open DevTools console for raw payload'));
+            }
+
           } else if (msg.msg === 'queue_full') {
             clearTimeout(timeout);
             es.close();
             reject(new Error('Queue full — please try again'));
           }
         } catch (parseErr) {
-          // Ignore JSON parse errors from SSE heartbeats
+          // Ignore non-JSON SSE heartbeat frames
         }
       };
 
