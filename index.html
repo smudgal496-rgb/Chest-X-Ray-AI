@@ -869,8 +869,18 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   btn.textContent = 'Saving...';
   btn.disabled    = true;
 
-  // xray_b64 / gradcam_b64 intentionally excluded:
-  // storing multi-MB image blobs in DB rows causes silent timeouts.
+  // Re-fetch the session fresh before every save to ensure token is valid
+  const { data: sessionData } = await supabase.auth.getSession();
+  const session = sessionData?.session;
+  console.debug('[ChestAI Save] session:', session ? 'valid' : 'MISSING', '| user_id:', currentUser?.id);
+
+  if (!session) {
+    btn.textContent = '💾 Save Analysis';
+    btn.disabled    = false;
+    showToast('❌ Session expired — please sign out and sign in again', 'error');
+    return;
+  }
+
   let saveError;
   try {
     const result = await Promise.race([
@@ -890,8 +900,10 @@ document.getElementById('save-btn').addEventListener('click', async () => {
         setTimeout(() => reject(new Error('Save timed out — check Supabase connection')), 10000)
       )
     ]);
+    console.debug('[ChestAI Save] result:', result);
     saveError = result.error;
   } catch (err) {
+    console.error('[ChestAI Save] caught error:', err);
     saveError = err;
   }
 
