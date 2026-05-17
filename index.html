@@ -494,7 +494,7 @@ tbody tr:hover td{background:rgba(56,180,255,0.03);}
 </div>
 
 <script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/+esm';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const SUPABASE_URL  = 'https://lhtbvyjmkdnlkxrdjyma.supabase.co';
@@ -606,8 +606,17 @@ document.getElementById('auth-btn').addEventListener('click', async () => {
 
 // ── Logout ────────────────────────────────────────────────────────────────────
 document.getElementById('logout-btn').addEventListener('click', async () => {
-  await supabase.auth.signOut();
+  try {
+    await Promise.race([
+      supabase.auth.signOut(),
+      new Promise(r => setTimeout(r, 3000)) // don't wait forever if extension blocks it
+    ]);
+  } catch (_) {}
+  // Clear all local state and force a full page reload — works even if
+  // the Supabase signOut call is intercepted by a browser extension
   allAnalyses = [];
+  localStorage.clear();
+  window.location.reload();
 });
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
