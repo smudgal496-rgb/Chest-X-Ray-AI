@@ -92,7 +92,6 @@ function showAuthError(msg, success=false) {
 window.doLogin    = doLogin;
 window.doRegister = doRegister;
 window.doLogout   = doLogout;
-document.getElementById('logout-btn').addEventListener('click', doLogout);
 
 window.switchAuthTab = function(mode) {
   document.getElementById('auth-mode').dataset.mode = mode;
@@ -187,41 +186,67 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Gradio API v4 — upload file then predict with returned path
-    const GAPI = GRADIO_URL + '/gradio_api';
-    const sessionHash = Math.random().toString(36).slice(2,12);
+    // Call HF Space Gradio API — try all known endpoints
+    const sessionHash = Math.random().toString(36).slice(2);
+    let lastErr = null;
+    let gotResult = false;
 
-    // Step 1: Upload the raw file (multipart) to get a server-side temp path
-    const fd = new FormData();
-    fd.append('files', uploadedFile, uploadedFile.name);
-    const upRes = await fetch(`${GAPI}/upload?upload_id=${sessionHash}`, { method:'POST', body:fd });
-    if (!upRes.ok) {
-      const upErr = await upRes.text().catch(()=>'');
-      throw new Error(`Upload failed ${upRes.status}: ${upErr.slice(0,200)}`);
-    }
-    const upJson = await upRes.json();
-    // upJson is an array of file paths (strings)
-    const filePath = typeof upJson[0] === 'string' ? upJson[0] : upJson[0]?.path;
-    if (!filePath) throw new Error('Upload returned no file path: ' + JSON.stringify(upJson));
+    // Try 1: /run/predict (standard Gradio on HF)
+    try {
+      const r1 = await fetch(`${GRADIO_URL}/run/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: [imageData] })
+      });
+      if (r1.ok) {
+        const j1 = await r1.json();
+        if (!j1.error) {
+          lastProbs  = j1.data[0];
+          lastCamB64 = j1.data[1];
+          gotResult  = true;
+        }
+      }
+    } catch(e) { lastErr = e; }
 
-    // Step 2: Run predict — pass the path as a FileData object (Gradio v4 format)
-    const predRes = await fetch(`${GAPI}/run/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fn_index: 0,
-        session_hash: sessionHash,
-        data: [{ path: filePath, orig_name: uploadedFile.name, size: uploadedFile.size, mime_type: uploadedFile.type, meta: { _type: 'gradio.FileData' } }]
-      })
-    });
-    if (!predRes.ok) {
-      const errText = await predRes.text().catch(()=>'');
-      throw new Error(`Predict failed ${predRes.status}: ${errText.slice(0,300)}`);
+    // Try 2: /api/predict with fn_index
+    if (!gotResult) {
+      try {
+        const r2 = await fetch(`${GRADIO_URL}/api/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: [imageData], fn_index: 0, session_hash: sessionHash })
+        });
+        if (r2.ok) {
+          const j2 = await r2.json();
+          if (!j2.error) {
+            lastProbs  = j2.data[0];
+            lastCamB64 = j2.data[1];
+            gotResult  = true;
+          }
+        }
+      } catch(e) { lastErr = e; }
     }
-    const predJson = await predRes.json();
-    if (predJson.error) throw new Error('Model error: ' + predJson.error);
-    lastProbs  = predJson.data[0];
-    lastCamB64 = predJson.data[1];
+
+    // Try 3: HF Inference API format
+    if (!gotResult) {
+      try {
+        const r3 = await fetch(`${GRADIO_URL}/--replicas/*/run/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: [imageData] })
+        });
+        if (r3.ok) {
+          const j3 = await r3.json();
+          if (!j3.error) {
+            lastProbs  = j3.data[0];
+            lastCamB64 = j3.data[1];
+            gotResult  = true;
+          }
+        }
+      } catch(e) { lastErr = e; }
+    }
+
+    if (!gotResult) throw new Error('All API endpoints failed. Check HF Space is Running and CORS is enabled in app.py');
 
   } catch (err) {
     document.getElementById('loading').classList.remove('active');
@@ -229,7 +254,7 @@ analyzeBtn.addEventListener('click', async () => {
     document.getElementById('spinner').style.display = 'none';
     document.getElementById('btn-icon').style.display = 'block';
     document.getElementById('btn-text').textContent = 'Analyze X-Ray';
-    alert('Analysis failed: ' + err.message + '\n\nMake sure your HF Space is Running (green status) at huggingface.co/spaces/shivammudgal/chestxrayai');
+    alert('Could not connect to model backend.\nMake sure your Kaggle Gradio session is running.');
     return;
   }
 
@@ -899,7 +924,7 @@ tbody tr:hover td{background:rgba(56,180,255,0.03);}
         <div class="user-dot"></div>
         <span id="user-email"></span>
       </div>
-      <button class="logout-btn" id="logout-btn">Sign Out</button>
+      <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
   </header>
 
