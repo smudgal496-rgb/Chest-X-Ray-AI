@@ -714,9 +714,21 @@ analyzeBtn.addEventListener('click', async () => {
             clearTimeout(timeout);
             es.close();
 
-            // ── Handle explicit backend error ──────────────────────────
+            // ── Handle explicit string error ───────────────────────────
             if (msg.output && msg.output.error) {
               reject(new Error('Model error: ' + msg.output.error));
+              return;
+            }
+
+            // ── Handle success:false (HF Space crashed / model not loaded)
+            // Payload: { output: { error:null, success:false, title:"Error", ... } }
+            if (msg.output && msg.output.success === false) {
+              const title = msg.output.title || 'Unknown error';
+              reject(new Error(
+                `HF Space returned an error ("${title}"). ` +
+                'The Space may be sleeping or the model file is missing. ' +
+                'Go to your HF Space → Restart Space, then try again.'
+              ));
               return;
             }
 
@@ -737,7 +749,6 @@ analyzeBtn.addEventListener('click', async () => {
             if (data && data.length >= 2) {
               resolve(data);
             } else {
-              // Log the full raw payload so the shape is visible in DevTools
               console.error('[ChestAI] Unexpected SSE response shape:', JSON.stringify(msg));
               reject(new Error('Unexpected response format — open DevTools console for raw payload'));
             }
@@ -858,25 +869,36 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   btn.textContent = 'Saving...';
   btn.disabled    = true;
 
-  const { error } = await supabase.from('analyses').insert({
-    user_id:        currentUser.id,
-    patient_name:   name,
-    patient_age:    age,
-    patient_gender: gender,
-    pneumonia:      lastProbs[0],
-    infiltration:   lastProbs[1],
-    effusion:       lastProbs[2],
-    cardiomegaly:   lastProbs[3],
-    atelectasis:    lastProbs[4],
-    gradcam_b64:    lastCamB64,
-    xray_b64:       lastXrayB64 ? lastXrayB64.split(',')[1] : null,
-    notes:          notes || null
-  });
+  // xray_b64 / gradcam_b64 intentionally excluded:
+  // storing multi-MB image blobs in DB rows causes silent timeouts.
+  let saveError;
+  try {
+    const result = await Promise.race([
+      supabase.from('analyses').insert({
+        user_id:        currentUser.id,
+        patient_name:   name,
+        patient_age:    age,
+        patient_gender: gender,
+        pneumonia:      lastProbs[0],
+        infiltration:   lastProbs[1],
+        effusion:       lastProbs[2],
+        cardiomegaly:   lastProbs[3],
+        atelectasis:    lastProbs[4],
+        notes:          notes || null
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Save timed out — check Supabase connection')), 10000)
+      )
+    ]);
+    saveError = result.error;
+  } catch (err) {
+    saveError = err;
+  }
 
   btn.textContent = '💾 Save Analysis';
   btn.disabled    = false;
 
-  if (error) { showToast('Save failed: ' + error.message, 'error'); return; }
+  if (saveError) { showToast('❌ Save failed: ' + saveError.message, 'error'); return; }
 
   await loadAnalyses();
   document.getElementById('save-success').style.display = 'block';
@@ -1065,26 +1087,8 @@ function generatePDF(id) {
     doc.text(doc.splitTextToSize(a.notes, 170), 20, 187);
   }
 
-  // Images
-  let imgY = 195;
-  if (a.xray_b64) {
-    try {
-      doc.setTextColor(232, 244, 255);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Original X-Ray', 20, imgY);
-      doc.addImage('data:image/jpeg;base64,' + a.xray_b64, 'JPEG', 20, imgY + 4, 75, 75);
-    } catch (e) { /* skip if image fails */ }
-  }
-  if (a.gradcam_b64) {
-    try {
-      doc.setTextColor(232, 244, 255);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Grad-CAM (AI Focus)', 110, imgY);
-      doc.addImage('data:image/png;base64,' + a.gradcam_b64, 'PNG', 110, imgY + 4, 75, 75);
-    } catch (e) { /* skip if image fails */ }
-  }
+  // Images are not stored in the database (to avoid row size limits).
+  // The report contains all numerical findings above.
 
   // Footer
   doc.setTextColor(74, 106, 133);
