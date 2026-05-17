@@ -187,28 +187,36 @@ analyzeBtn.addEventListener('click', async () => {
     const imageData = await new Promise(resolve => { reader.onload = e => resolve(e.target.result); reader.readAsDataURL(uploadedFile); });
     lastXrayB64 = imageData;
 
-    // Gradio API v4 — /gradio_api/run/predict with base64 dataURL
-    const sessionHash = Math.random().toString(36).slice(2,12);
+    // Gradio API v4 — upload file then predict with returned path
     const GAPI = GRADIO_URL + '/gradio_api';
+    const sessionHash = Math.random().toString(36).slice(2,12);
 
-    // Upload the file first to get a server path
-    const imgBlob = await fetch(imageData).then(r => r.blob());
+    // Step 1: Upload the raw file (multipart) to get a server-side temp path
     const fd = new FormData();
-    fd.append('files', imgBlob, uploadedFile.name);
-    const upRes = await fetch(`${GAPI}/upload`, { method:'POST', body:fd });
-    if (!upRes.ok) throw new Error(`Upload failed: ${upRes.status} — check HF Space CORS`);
+    fd.append('files', uploadedFile, uploadedFile.name);
+    const upRes = await fetch(`${GAPI}/upload?upload_id=${sessionHash}`, { method:'POST', body:fd });
+    if (!upRes.ok) {
+      const upErr = await upRes.text().catch(()=>'');
+      throw new Error(`Upload failed ${upRes.status}: ${upErr.slice(0,200)}`);
+    }
     const upJson = await upRes.json();
-    const filePath = upJson[0]?.path ?? upJson[0];
+    // upJson is an array of file paths (strings)
+    const filePath = typeof upJson[0] === 'string' ? upJson[0] : upJson[0]?.path;
+    if (!filePath) throw new Error('Upload returned no file path: ' + JSON.stringify(upJson));
 
-    // Run prediction with the uploaded path
+    // Step 2: Run predict — pass the path as a FileData object (Gradio v4 format)
     const predRes = await fetch(`${GAPI}/run/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fn_index:0, session_hash:sessionHash, data:[{path:filePath, orig_name:uploadedFile.name, mime_type:imgBlob.type}] })
+      body: JSON.stringify({
+        fn_index: 0,
+        session_hash: sessionHash,
+        data: [{ path: filePath, orig_name: uploadedFile.name, size: uploadedFile.size, mime_type: uploadedFile.type, meta: { _type: 'gradio.FileData' } }]
+      })
     });
     if (!predRes.ok) {
-      const t = await predRes.text().catch(()=>'');
-      throw new Error(`Predict failed: ${predRes.status} — ${t.slice(0,150)}`);
+      const errText = await predRes.text().catch(()=>'');
+      throw new Error(`Predict failed ${predRes.status}: ${errText.slice(0,300)}`);
     }
     const predJson = await predRes.json();
     if (predJson.error) throw new Error('Model error: ' + predJson.error);
