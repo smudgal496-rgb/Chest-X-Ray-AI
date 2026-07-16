@@ -13,6 +13,7 @@ An AI-powered web application for chest X-ray analysis. Upload an X-ray and get 
 
 Hosted on Hugging Face Spaces (backend) + GitHub Pages (frontend).  
 → **[Try ChestAI live](https://shivammudgal-chestxrayai.hf.space)**
+→ **[Live working and Deployed Website](https://smudgal496-rgb.github.io/Chest-X-Ray-AI/)**
 
 ---
 
